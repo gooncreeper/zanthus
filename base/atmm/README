@@ -1,0 +1,7 @@
+Architecture, Thread, and Memory Manager
+
+ATMM shall provide limitable access to architecture supervisor features, thread
+scheduling (timer interrupts provided externally), and memory page allocation.
+
+ATMM will be the only task that runs in supervisor mode, and thus all tasks
+that require supervisor access shall be performed in ATMM.

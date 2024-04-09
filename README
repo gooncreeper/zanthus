@@ -1,0 +1,7 @@
+Zanthus - General Purpose Operating System
+
+This repository contains several Zanthus projects mantainained in a single
+tree.
+
+Organization
+	base : Primary programs that constitute a Zanthus System
