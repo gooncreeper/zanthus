@@ -1,7 +1,0 @@
-Base - Primary programs that constitute a Zanthus System
-
-This folder contains the base programs that constitute a Zanthus system
-Currently planned to be part of Zanthus-Base:
-	* ATMM (kernel)
-	* NVC
-	* VFS
