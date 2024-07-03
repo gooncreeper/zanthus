@@ -1,0 +1,364 @@
+Architecture, Thread, and Memory Manager
+
+/// NOTICE:
+/// This document is still work-in-progress and its current only purpose is to
+/// give a preview of what the interface will look like and potentially collect
+/// feedback.
+
+--------
+Document
+--------
+This document specifies the behavior and API of ATMM. Take note of the following
+special text features.
+
+-------
+SECTION
+-------
+
+%%%%%%%%%%%
+SUB-SECTION
+%%%%%%%%%%%
+
+[[ RATIONALE AND EXTRA INFORMATION ]]
+
+~PARAMETER     Value of paramater to syscall
+*VARIABLE      Variable is a pointer
+VARIABLE[]     Variable is a pointer to an array
+VARIABLE[x..y] Elements x to y of variable array
+VARIABLE[x:y]  Bits of variable from LSB y to LSB x.
+               [[ (VARIABLE >> y) & ((1 << x) - 1) ]]
+VARIABLE[:y]   Bits of variable starting from LSB Y
+               [[ (VARIABLE >> y) ]]
+VARIABLE.FIELD Field of variable (specified in Section: Structures)
+
+--------
+Syscalls
+--------
+This section lists all the syscalls and their arguments. Each syscall is format
+-ed as follows.
+
+SYSCALL NUMBER: RETURN1, RETURN2 = SYSCALL MNEMONIC(ARGUMENTS, ...) [VALID ARGS, ...]
+
+All syscalls have a maximum of four arguments and always two returns. The second
+return value indicates an error
+	RETURN2[ :16] Error indicator if all bits set
+	RETURN2[15:0] Error code
+[[ In two's compliment, the expression (RETURN2 >= -65536 && RETURN2 < 0)
+   indicates error ]]
+
+[[ Note: Since we cannot encode 0 args, on syscalls where 0 args would be useful
+   we add a preliminary `ignored` argument. (This argument is not special in any
+   other way) ]]
+
+
+System Info
+00h: *sysinfo  , size  = sysinfoptr(ignored)                           [1, , , ]
+01h: msyscall[], count = syscall   (msyscall[], count)                 [1,2, , ]
+02h: timeFrac  , time  = srdtime   (inored)                            [1, , , ]
+
+System Config
+10h: timeFrac, time = selapse (timeFrac, time)                         [1,2, , ]
+18h: addrLow , size = smemnew (addrLow , size, flags, addrHigh)        [1,2,3,4]
+19h: addrLow , size = smeminv (addrLow , size, flags, addrHigh)        [1,2,3,4]
+20h: addrLow , size = smemfinv(addrLow , size, flags, addrHigh)        [1,2,3,4]
+
+Object
+20h: count, *addr   = osuggest(count, flags, xsize, *allocParams)      [1,2,3,4]
+21h: count, *obj    = oalloc  (count, flags, xsize, *addr       )      [1,2,3,4]
+22h: *addr, size    = oreserve(*addr, size)                            [1,2, , ]
+23h: *obj , count   = ofree   (*obj , count)                           [1,2, , ]
+24h: *obj1, *obj2   = oxchg   (*obj1, count, flags, *obj2)             [1,2,3,4]
+25h: *obj , *newObj = ocopy   (*obj , count, flags, *newObj)           [1,2,3,4]
+
+28h: *buffer, read   = oxread (*buffer, *obj, size, offset)            [ ,2,3,4]
+29h: *buffer, writen = oxwrite(*buffer, *obj, size, offset)            [ ,2,3,4]
+
+2eh: filled, *end = oreservelist(regionInfo[], *start, size, *end)     [1,2,3,4]
+2fh: filled, *end = olist       (objectInfo[], *start, size, *end)     [1,2,3,4]
+
+[[Use oreserve() as ounreserve()]]
+[[Use oxchg() as omove()]]
+[[Use olist() as ostat()]]
+
+Page
+40h: #
+
+Empty
+50h: #
+
+Rspace
+60h: *rspace = rset   (ignored, *rspace, *thread, count)         [1,2,3,4]
+61h: *rspace = rsrc   (ignored, *rspace, *thread, count)         [1,2,3,4]
+62h: *rspace = rdst   (ignored, *rspace, *thread, count)         [1,2,3,4]
+63h: *rspace = rsrcdst(ignored, *rspace, *thread, count)         [1,2,3,4]
+
+Thread
+80h: waitednsecs = thalt(timeFrac, time, *thread, count) [1,2,3,4]
+
+Endpnt
+90h: = esetesr  (*endpnt, entryAddress) [ ,2, , ]
+91h: = eclresr  (*endpnt)                           [1, , , ]
+92h: senderArgc = erecv    (*endpnt , args[], argc, *maxtime)  [1,2,3,4]
+93h: = esend    (*endpnt , args[], argc, *maxtime)  [1,2,3,4]
+94h: = erecvmany(*endpnts, count)                   [ ,2, , ]
+95h: = esendmany(*endpnts, count)                   [ ,2, , ]
+
+Intvec
+200h: vector   = isetvec   (*intvec, vector)       [ ,2, , ]
+201h: vector   = igetvec   (*intvec)               [1, , , ]
+202h: epointId = isetendpnt(*intvec, *endpnt)      [ ,2, , ]
+203h: epointId = igetendpnt(*intvec)               [1, , , ]
+208h: intvecId = iaddelapse(*intvec, psecL, psecH) [1,2,3, ]
+209h: intvecId = idelelapse(*intvec)               [1, , , ]
+
+
+------------------
+Calling Convention
+------------------
+This section specifies the argument passing conventions for each supported arch-
+itecture.
+
+[[ X86
+We have both INT 0x6A and 0x6B as syscall interrupts. The primary difference is
+that INT 0x6A works like SYSCALL where the passed IP is always the next
+instruction, and INT 0x6B works like SYSENTER where you have to pass the return
+IP, which could be useful for tail-syscalls. ]]
+
+%%%
+X86
+%%%
+word_t size is 4 bytes
+
+Entry
+	EAX = Syscall Vector
+	EDI = Argument 1 (if Syscall Args >= 1)
+	ESI = Argument 2 (if Syscall Args >= 2)
+	EDX = Argument 3 (if Syscall Args >= 3)
+
+	If INT 0x6A, INT 0x6B, or SYSENTER is used then
+		ECX = Argument 4 (if Syscall Args == 4)
+	Else If SYSCALL is used then
+		EBX = Arugment 4 (if Syscall Args == 4) 
+
+	If SYSENTER or INT 0x6B is used then
+		EBX = Return EIP
+		EBP = Return ESP
+
+	If SYSCALL is used then
+		ECX = Return EIP (set by SYSCALL instruction)
+
+Return
+	EAX = Return 1
+	EDX = Return 2
+	All other registers preserved, unless a paramater is `Return %` which
+	 that register will equal the paramater.
+
+
+%%%%%%
+X86-64
+%%%%%%
+word_t size is 8 bytes
+
+Entry
+	RAX = Syscall Vector
+	RDI = Argument 1 (if Syscall Args >= 1)
+	RSI = Argument 2 (if Syscall Args >= 2)
+	RDX = Argument 3 (if Syscall Args >= 3)
+
+	If INT 0x6A, INT 0x6B, or SYSENTER is used then
+		RCX = Argument 4 (if Syscall Args == 4)
+	Else If SYSCALL is used then
+		RBX = Arugment 4 (if Syscall Args == 4) 
+
+	If SYSENTER or INT 0x6B is used then
+		RBX = Return RIP
+		RBP = Return RSP
+
+	If SYSCALL is used then
+		RCX = Return RIP (set by SYSCALL instruction)
+
+Return
+	RAX = Return 1
+	RDX = Return 2
+	CF = Error
+	All other registers preserved, unless a paramater is `Return %` which
+	 that register will equal the paramater on return.
+
+
+--------
+Pointers
+--------
+All pointers passed to syscalls are automically aligned (downwards) to the
+alignment of word_t.
+
+
+-------
+Objects #($#($@($)(@#)$)!(@#)()!@%(@$)#^(#)$(!))$(123)
+-------
+Objects are the 
+
+Every ATMM objects resides in a Resource Space.
+
+All ATMM objects share a singular Address Space (aka. Resource Space) and can be
+represented as regular memory pointers.
+
+They each have an alignment requirement (see sysinfo)
+and power of two size.
+
+------------
+Object Flags
+------------
+Bit
+ 0- 7: FOBJTYPE Object type (see Section: Objects)
+31-12: FRESTRICT
+       12: FNOREAD     Object cannot be read  from
+       13: FNOWRITE    Object cannot be written to
+       14: FSTATIC     Memory's physical address cannot be moved
+       15: FCONTINUOUS Object's physical memory is continuous
+       16: FNOLAZY     Object cannot be lazily-allocated (aka. copy-on-write)
+       17: FNOSWAP     Object cannot be swapped
+       31-27: FCACHEMODE
+              00h: FCACHEDEFAULT Default caching mode for architecture
+              1Fh: FNOCACHE      All caching is disabled
+              X86
+              00h: FWRITEBACK
+              02h: FWRITECOMBINING
+              03h: FWRITETHROUGH
+              04h: FWRITEPROTECT
+       X86
+       22: FNOEXEC     Object cannot be executed from
+
+------------
+Region Flags
+------------
+Bit
+  0: RNOREAD
+  1: RNOWRITE
+  2: RNOKERNEL
+
+-----
+Perms
+-----
+Bit
+ 0: PREAD   Object can be read  from
+ 1: PWRITE  Object can be written to
+ 2: PSOURCE Object can be used as a `source`      object
+ 3: PDEST   Object can be used as a `destination` object
+ 4: 
+ 5: 
+ 6: 
+ 7: 
+
+------
+Errors
+------
+0: EARCH  Architecture cannot support requested feature or combination of flags
+1: EADDR  Invalid address
+2: EFLAGS Invalid combination of flags or value
+3: EFPERM No permission for given syscall / invalid syscall number
+4: EINUSE Given object is in use
+5: EINVAL Invalid value
+6: ENOMEM Out of memory
+7: EOTIME Operation timed out
+
+-------
+Objects
+-------
+00h: Page
+01h: Empty
+02h: Rspace (Resource Space)
+03h: Thread
+04h: Endpnt (Endpoint)
+X86
+80h: Intvec (Interrupt Vector)
+
+----------
+Structures
+----------
+Structures are composed of entirely word_t's and can be represented as arrays.
+The format shown is
+	[word_index] field
+
+%%%%%%%%%%%%%%
+syscall vector
+%%%%%%%%%%%%%%
+[0][ :12] Reserved (0)
+[0][11:2] Syscall Number
+[0][ 1:0] Syscall Args - 1
+
+
+%%%%%%%%
+msyscall
+%%%%%%%%
+[0] Syscall Vector
+[1] Reserved (0)
+[2] *Return 1
+[3] *Return 2
+[4] Paramater 1
+[5] Paramater 2
+[6] Paramater 3
+[7] Paramater 4
+
+
+%%%%%%%
+sysinfo
+%%%%%%%
+[10h] SwapStoreBits
+
+[200h + OBJTYPE * 4]: Object Size
+[201h + OBJTYPE * 4]: Object Size log2
+[202h + OBJTYPE * 4]: True Object Size
+
+[Default] Reserved (0)
+
+
+%%%%%%%%%%%
+allocParams
+%%%%%%%%%%%
+[0] log2align
+[1] addrMin
+[2] addrMax
+[3] physlog2align
+[4] physAddrMinLow
+[5] physAddrMinHigh
+[6] physAddrMaxLow
+[7] physAddrMaxHigh
+
+%%%%%%%%
+physAddr
+%%%%%%%%
+[0] physAddrLow
+[1] physAddrHigh
+
+%%%%
+time
+%%%%
+[0] timeFrac
+[1] time
+
+%%%%%%%%%%
+regionInfo
+%%%%%%%%%%
+[0] addrLow
+[1] addrHigh
+[2] sizeLow
+[3] sizeHigh
+
+%%%%%%%%%%
+objectInfo
+%%%%%%%%%%
+[0] type
+[1] addr
+[2] xsize
+[3] size
+[4] permissions
+[5] reserved (0)
+[6] physAddrLow
+[7] physAddrHigh
+
+----
+Time
+----
+Time is represented in two parts, seconds (time) and their fractional component
+ (timeFrac.) The time taken in seconds can be calculated as
+	time + timeFrac / (1 << bits(word_t))
