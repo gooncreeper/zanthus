@@ -1,7 +1,1 @@
-Zanthus - General Purpose Operating System
-
-This repository contains several Zanthus projects mantainained in a single
-tree.
-
-Organization
-	base : Primary programs that constitute a Zanthus System
+Zanthus is a microkernel based operating system written in Zig. It is highly modularized with a focus on performance and security.

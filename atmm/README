@@ -1,0 +1,3 @@
+Architecture, Thread, and Memory Manager
+
+ATMM provides access architecture supervisor features, ipc, thread scheduling, and memory management.
